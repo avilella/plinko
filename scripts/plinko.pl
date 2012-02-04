@@ -14,6 +14,8 @@ print STDERR "[init] ",time()-$self->{starttime}," secs...\n" if ($debug);
 $self->{work_dir} = '/net/isilon7/nobackup/ensembl/avilella/other/other/other/other/plinko';
 $self->{assembler} = 'mira';
 $self->{assembler_exe}{mira} = $ENV{'HOME'}.'/plinko/assembler/mira/bin/mira';
+$self->{assembler_exe}{trinity} = $ENV{'HOME'}.'/plinko/assembler/trinity/latest/Trinity.pl';
+
 $self->{lsf_options} = undef;
 GetOptions(
 	   'i|input:s' => \$input,
@@ -21,6 +23,7 @@ GetOptions(
            'work_dir:s' => \$self->{work_dir},
            'assembler:s' => \$self->{assembler},
            'lsf_options:s' => \$self->{lsf_options},
+           'retry:s' => \$self->{retry},
           );
 
 
@@ -85,17 +88,30 @@ sub download_text_file {
 
 sub prepare_input_for_assembler {
   my $self = shift;
-  $self->prepare_input_for_assembler_mira if ($self->{assembler} =~ /mira/);
+  $self->prepare_input_for_assembler_mira    if ($self->{assembler} =~ /mira/);
+  $self->prepare_input_for_assembler_trinity if ($self->{assembler} =~ /trinity/);
   unless ($self->{ready_for_assembly}) {die "cannot ready project for assembly: $!";};
   return;
 }
 
 sub prepare_input_for_assembler_mira {
   my $self = shift;
-  $self->cleanup_input_file_mira;
+  $self->cleanup_input_file_mira unless (0 < $self->{retry});
   foreach my $File_Name (keys %{$self->{project}{filenames}}) {
     my $file = $self->{project}{filenames}{$File_Name}{file};
     $self->uncompress_and_concatenate_mira($File_Name);
+  }
+
+  $self->{ready_for_assembly} = 1;
+  return;
+}
+
+sub prepare_input_for_assembler_trinity {
+  my $self = shift;
+  $self->cleanup_input_file_trinity unless (0 < $self->{retry});
+  foreach my $File_Name (keys %{$self->{project}{filenames}}) {
+    my $file = $self->{project}{filenames}{$File_Name}{file};
+    $self->uncompress_and_concatenate_trinity($File_Name);
   }
 
   $self->{ready_for_assembly} = 1;
@@ -112,9 +128,27 @@ sub define_input_file_mira {
   return;
 }
 
+sub define_input_file_trinity {
+  my $self = shift;
+  my $File_Name = shift;
+
+  $self->{project}{input_file_trinity} = $self->{work_dir} . "/" . $self->{project}{id} . ".trinity.fastq";
+
+  return;
+}
+
 sub cleanup_input_file_mira {
   my $self = shift;
   my $file_regexp = $self->{work_dir} . "/*.fastq";
+  my $cmd = "rm -f " . $file_regexp;
+  unless (0 == system($cmd)) { die ("cannot cleanup old input_file $file_regexp\n: $cmd\n $!");}
+  
+  return;
+}
+
+sub cleanup_input_file_trinity {
+  my $self = shift;
+  my $file_regexp = $self->{work_dir} . "/*.trinity.fastq";
   my $cmd = "rm -f " . $file_regexp;
   unless (0 == system($cmd)) { die ("cannot cleanup old input_file $file_regexp\n: $cmd\n $!");}
   
@@ -130,6 +164,22 @@ sub uncompress_and_concatenate_mira {
   my $method = 'gunzip';
   my $cmd = "$method -c ". $file ." >> " . $self->{project}{input_file_mira};
   print STDERR "[gunzip input_file $file] ",time()-$self->{starttime}," secs...\n" if ($debug);
+  next if ($self->{retry});
+  unless (0 == system($cmd)) { die ("cannot $method $file\n: $cmd\n $!");}
+
+  return;
+}
+
+sub uncompress_and_concatenate_trinity {
+  my $self = shift;
+  my $File_Name = shift;
+  my $file = $self->{project}{filenames}{$File_Name}{file};
+  $self->define_input_file_trinity($File_Name);
+
+  my $method = 'gunzip';
+  my $cmd = "$method -c ". $file ." >> " . $self->{project}{input_file_trinity};
+  print STDERR "[gunzip input_file $file] ",time()-$self->{starttime}," secs...\n" if ($debug);
+  next if ($self->{retry});
   unless (0 == system($cmd)) { die ("cannot $method $file\n: $cmd\n $!");}
 
   return;
@@ -139,12 +189,18 @@ sub execute_assembler {
   my $self = shift;
   
   $self->cmd_assembler_mira if ($self->{assembler} =~ /mira/);
+  $self->cmd_assembler_trinity if ($self->{assembler} =~ /trinity/);
+  my $cmd;
+  my $work_dir = $self->{project}{work_dir};
+  print "\n# cd $work_dir\n";
   if (defined $self->{lsf_options}) {
-    $self->{project}{assembler_cmd} = "bsub -I" . $self->{lsf_options} . ' "' . $self->{project}{assembler_cmd} . '"';
+    $self->{project}{assembler_cmd} = $self->{lsf_options} . ' "' . $self->{project}{assembler_cmd} . '"';
   }
-  my $cmd = $self->{project}{assembler_cmd};
+  $cmd = $self->{project}{assembler_cmd};
   $DB::single=1;1;#??
-  unless (0 == system($cmd)) { die ("cannot create work_dir\n: $cmd\n $!");}
+  print "\n# $cmd\n";
+  print "# $cmd\n";
+#  unless (0 == system($cmd)) { die ("cannot create work_dir\n: $cmd\n $!");}
 
   return;
 }
@@ -166,10 +222,21 @@ sub cmd_assembler_mira {
   $self->{project}{assembler_cmd} = $cmd;
 }
 
+sub cmd_assembler_trinity {
+  my $self = shift;
+  my $trinity_exe = $self->{assembler_exe}{trinity};
+
+  my $trinity_project_id = $self->{project}{id};
+  my $inputfile = $self->{project}{input_file_trinity} || die "undefined trinity inputfile:$!";
+  my $cmd = "$trinity_exe --seqType fq --single $inputfile --CPU 1 --bflyHeapSpace 60G";
+  $self->{project}{assembler_cmd} = $cmd;
+}
+
 sub translate_platform_mira {
   my $self = shift;
   my $platform = shift;
   $platform = 'solexa' if ($platform =~ /ILLUMINA/i);
+  $platform = '454' if ($platform =~ /454/i);
 
   return $platform;
 }
