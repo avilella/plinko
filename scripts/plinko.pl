@@ -22,11 +22,14 @@ GetOptions(
            'd|debug:s' => \$debug,
            'work_dir:s' => \$self->{work_dir},
            'assembler:s' => \$self->{assembler},
+           'trinity_exe:s' => \$self->{assembler_exe}{trinity},
            'lsf_options:s' => \$self->{lsf_options},
            'retry:s' => \$self->{retry},
           );
 
 
+
+if ($input =~ /^(SR\w\d+)/) { $input = 'http://www.ebi.ac.uk/ena/data/view/reports/sra/fastq_files/internal/' . $input; };
 if ($input =~ /^http\:\/\/www\.ebi\.ac\.uk\/ena\/data\/view\/reports\/sra\/fastq_files\/internal\/(SR\w\d+)/) {
   $self->{project}{id} = $1;
   $self->{project}{url} = $input;
@@ -56,7 +59,10 @@ sub preprocess_text_file {
   while (<TEXTFILE>) {
     chomp $_;
     next if ($_ =~ /^Study/);
-    my ($Study,$Sample,$Experiment,$Run,$Organism,$Instrument_Platform,$Instrument_Model,$Library_Name,$Library_Layout,$Library_Source,$Library_Selection,$Run_Read_Count,$Run_Base_Count,$File_Name,$File_Size,$md5,$Ftp) = split("\t", $_);
+    my ($Study,$Sample,$Experiment,$Run,$Organism,$Instrument_Platform,
+        $Instrument_Model,$Library_Name,$Library_Layout,$Library_Source,
+        $Library_Selection,$Run_Read_Count,$Run_Base_Count,$File_Name,
+        $File_Size,$md5,$Ftp) = split("\t", $_);
     $self->{project}{filenames}{$File_Name}{file} = $self->{work_dir} . "/" . $File_Name;
     $self->{project}{filenames}{$File_Name}{Instrument_Platform} = $Instrument_Platform;
     $self->{project}{platforms}{$Instrument_Platform}{count}++;
@@ -191,15 +197,14 @@ sub execute_assembler {
   $self->cmd_assembler_mira if ($self->{assembler} =~ /mira/);
   $self->cmd_assembler_trinity if ($self->{assembler} =~ /trinity/);
   my $cmd;
-  my $work_dir = $self->{project}{work_dir};
-  print "\n# cd $work_dir\n";
+  my $work_dir = $self->{work_dir};
+  print "\n cd $work_dir && ";
   if (defined $self->{lsf_options}) {
     $self->{project}{assembler_cmd} = $self->{lsf_options} . ' "' . $self->{project}{assembler_cmd} . '"';
   }
   $cmd = $self->{project}{assembler_cmd};
   $DB::single=1;1;#??
-  print "\n# $cmd\n";
-  print "# $cmd\n";
+  print " $cmd\n";
 #  unless (0 == system($cmd)) { die ("cannot create work_dir\n: $cmd\n $!");}
 
   return;
@@ -217,8 +222,10 @@ sub cmd_assembler_mira {
     print STDERR "input: $this_platform - $count\n" if ($debug);
   }
   my $mira_platform = $self->translate_platform_mira($prevalent_platform);
-  my $platform_settings = uc($mira_platform) ."_SETTINGS";
-  my $cmd = "$mira_exe --project=$mira_project_id -DI:trt=/tmp/ --job=denovo,est,accurate,$mira_platform $platform_settings -LR:mxti=no";
+  my $platform_settings;
+  # $platform_settings = uc($mira_platform) ."_SETTINGS";
+  # $platform_settings .= " -LR:mxti=no" if ($platform_settings =~ /solexa/i);
+  my $cmd = "$mira_exe --project=$mira_project_id -DI:trt=/tmp/ --job=denovo,est,accurate,$mira_platform $platform_settings";
   $self->{project}{assembler_cmd} = $cmd;
 }
 
@@ -228,7 +235,7 @@ sub cmd_assembler_trinity {
 
   my $trinity_project_id = $self->{project}{id};
   my $inputfile = $self->{project}{input_file_trinity} || die "undefined trinity inputfile:$!";
-  my $cmd = "$trinity_exe --seqType fq --single $inputfile --CPU 1 --bflyHeapSpace 60G";
+  my $cmd = "$trinity_exe --seqType fq --single $inputfile --CPU 1 --bflyHeapSpace 64G";
   $self->{project}{assembler_cmd} = $cmd;
 }
 
