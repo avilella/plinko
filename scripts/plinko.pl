@@ -15,6 +15,7 @@ $self->{work_dir} = '/net/isilon7/nobackup/ensembl/avilella/other/other/other/ot
 $self->{assembler} = 'mira';
 $self->{assembler_exe}{mira} = $ENV{'HOME'}.'/plinko/assembler/mira/bin/mira';
 $self->{assembler_exe}{trinity} = $ENV{'HOME'}.'/plinko/assembler/trinity/latest/Trinity.pl';
+$self->{assembler_exe}{newbler26} = '/homes/avilella/newbler/Newbler_v2.6/bin/runAssembly';
 
 $self->{lsf_options} = undef;
 GetOptions(
@@ -29,8 +30,8 @@ GetOptions(
 
 
 
-if ($input =~ /^(SR\w\d+)/) { $input = 'http://www.ebi.ac.uk/ena/data/view/reports/sra/fastq_files/internal/' . $input; };
-if ($input =~ /^http\:\/\/www\.ebi\.ac\.uk\/ena\/data\/view\/reports\/sra\/fastq_files\/internal\/(SR\w\d+)/) {
+if ($input =~ /^([SE]R\w\d+)/) { $input = 'http://www.ebi.ac.uk/ena/data/view/reports/sra/fastq_files/internal/' . $input; };
+if ($input =~ /^http\:\/\/www\.ebi\.ac\.uk\/ena\/data\/view\/reports\/sra\/fastq_files\/internal\/([ES]R\w\d+)/) {
   $self->{project}{id} = $1;
   $self->{project}{url} = $input;
   $self->create_work_dir;
@@ -58,7 +59,11 @@ sub preprocess_text_file {
   open TEXTFILE, $self->{project}{id} or die $!;
   while (<TEXTFILE>) {
     chomp $_;
+    if ($_ =~ /No results found/) {
+      print STDERR "No results found. File probably still not uploaded\n"; exit 0;
+    }
     next if ($_ =~ /^Study/);
+    $DB::single=$debug;1;#??
     my ($Study,$Sample,$Experiment,$Run,$Organism,$Instrument_Platform,
         $Instrument_Model,$Library_Name,$Library_Layout,$Library_Source,
         $Library_Selection,$Run_Read_Count,$Run_Base_Count,$File_Name,
@@ -88,13 +93,13 @@ sub download_text_file {
   my $id = $self->{project}{id};
   my $cmd = "rm -f $id && wget ". $self->{project}{url} ." -o " . $self->{project}{text_file};
   unless (0 == system($cmd)) { die ("cannot download project text_file\n: $cmd\n $!");}
-
+  $DB::single=$debug;1;
   return;
 }
 
 sub prepare_input_for_assembler {
   my $self = shift;
-  $self->prepare_input_for_assembler_mira    if ($self->{assembler} =~ /mira/);
+  $self->prepare_input_for_assembler_mira    if ($self->{assembler} =~ /mira|newbler26/);
   $self->prepare_input_for_assembler_trinity if ($self->{assembler} =~ /trinity/);
   unless ($self->{ready_for_assembly}) {die "cannot ready project for assembly: $!";};
   return;
@@ -194,7 +199,14 @@ sub uncompress_and_concatenate_trinity {
 sub execute_assembler {
   my $self = shift;
   
+  if ($self->{lsf_options} =~ /^(\d+)$/) {
+    print STDERR "# $1\n";
+    $self->{memory} = $1; my $mem = $self->{memory};
+    $self->{lsf_options} = "bsub -I -q research-rh6 -R \"rusage[mem=$mem]\" -M$mem ";
+  }
+
   $self->cmd_assembler_mira if ($self->{assembler} =~ /mira/);
+  $self->cmd_assembler_newbler26 if ($self->{assembler} =~ /newbler26/);
   $self->cmd_assembler_trinity if ($self->{assembler} =~ /trinity/);
   my $cmd;
   my $work_dir = $self->{work_dir};
@@ -203,7 +215,7 @@ sub execute_assembler {
     $self->{project}{assembler_cmd} = $self->{lsf_options} . ' "' . $self->{project}{assembler_cmd} . '"';
   }
   $cmd = $self->{project}{assembler_cmd};
-  $DB::single=1;1;#??
+
   print " $cmd\n";
 #  unless (0 == system($cmd)) { die ("cannot create work_dir\n: $cmd\n $!");}
 
@@ -229,13 +241,25 @@ sub cmd_assembler_mira {
   $self->{project}{assembler_cmd} = $cmd;
 }
 
+sub cmd_assembler_newbler26 {
+  my $self = shift;
+  my $newbler26_exe = $self->{assembler_exe}{newbler26};
+  my $project_id = $self->{project}{id};
+
+  my $inputfile = $self->{project}{input_file_mira} || die "undefined newbler26 inputfile:$!";
+  my $cmd = "$newbler26_exe -cdna -o newbler26.$project_id $inputfile";
+  $self->{project}{assembler_cmd} = $cmd;
+}
+
+
 sub cmd_assembler_trinity {
   my $self = shift;
   my $trinity_exe = $self->{assembler_exe}{trinity};
 
   my $trinity_project_id = $self->{project}{id};
   my $inputfile = $self->{project}{input_file_trinity} || die "undefined trinity inputfile:$!";
-  my $cmd = "$trinity_exe --seqType fq --single $inputfile --CPU 1 --bflyHeapSpace 64G";
+  my $heap = '64G'; if (defined ($self->{memory})) { $heap = $self->{memory}/1000 . 'G';}
+  my $cmd = "$trinity_exe --seqType fq --single $inputfile --CPU 1 --bflyHeapSpace $heap";
   $self->{project}{assembler_cmd} = $cmd;
 }
 
