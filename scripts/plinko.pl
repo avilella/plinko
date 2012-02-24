@@ -30,8 +30,8 @@ GetOptions(
 
 
 
-if ($input =~ /^([SE]R\w\d+)/) { $input = 'http://www.ebi.ac.uk/ena/data/view/reports/sra/fastq_files/internal/' . $input; };
-if ($input =~ /^http\:\/\/www\.ebi\.ac\.uk\/ena\/data\/view\/reports\/sra\/fastq_files\/internal\/([ES]R\w\d+)/) {
+if ($input =~ /^([SED]R\w\d+)/) { $input = 'http://www.ebi.ac.uk/ena/data/view/reports/sra/fastq_files/internal/' . $input; };
+if ($input =~ /^http\:\/\/www\.ebi\.ac\.uk\/ena\/data\/view\/reports\/sra\/fastq_files\/internal\/([SED]R\w\d+)/) {
   $self->{project}{id} = $1;
   $self->{project}{url} = $input;
   $self->create_work_dir;
@@ -82,14 +82,15 @@ sub download_ftp {
   my $self      = shift;
   my $Ftp = shift;
   my $cmd = "wget -c ". $Ftp;
-  unless (0 == system($cmd)) { die ("cannot download Ftp $Ftp\n: $cmd\n $!");}
+
+  unless (0 == system($cmd)) { warn ("cannot download Ftp $Ftp\n: $cmd\n $!");}
 
   return;
 }
 
 sub download_text_file {
   my $self = shift;
-  $self->{project}{text_file} = $self->{work_dir} . "/" . $self->{project}{id} . ".text_file";
+  $self->{project}{text_file} = $self->{work_dir} . "/" . $self->{project}{id} . ".text_file.wget.log";
   my $id = $self->{project}{id};
   my $cmd = "rm -f $id && wget ". $self->{project}{url} ." -o " . $self->{project}{text_file};
   unless (0 == system($cmd)) { die ("cannot download project text_file\n: $cmd\n $!");}
